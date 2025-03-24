@@ -22,8 +22,12 @@ export class BrownianViewer {
     this.world = this.physicsManager.world;
     this.rigidBodies = this.physicsManager.rigidBodies;
     
-    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1900, this.bacteria, 0, this.cellRadius);
+    // Create a cubic boundary box
+    this.createBoundaryBox();
     
+    // Create particles
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 4000, this.bacteria, this.boxSize);
+    this.createParticles(this.bacteriaRadius*2.12, 8, 0x00ffff, 4, this.bacteria, this.boxSize);
     // Initialize AR
     this.arHandler = new ARHandler(this.renderer, this.scene, this.cellGroup);
     this.setupCallbacks();
@@ -102,12 +106,13 @@ export class BrownianViewer {
     this.physicsManager.rigidBodies = [];
     
     // Create new particles
-    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1500, this.bacteria, 0, this.cellRadius);
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 3000, this.bacteria, this.boxSize);
+    this.createParticles(this.bacteriaRadius*2.12, 8, 0x00ffff, 4, this.bacteria, this.boxSize);
   }
 
   initScene() {
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.001, 3000);
+    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 20, 3000);
     this.camera.position.set(20, 20, 20);
     this.camera.lookAt(0, 0, 0);
 
@@ -132,7 +137,7 @@ export class BrownianViewer {
     
     const lights = [
       { color: 0xFFFFFF, intensity: 2.0, position: [3, 10, 3] },
-      { color: 0xFFFFFF, intensity: 2.0, position: [0, -5, -1] },
+      { color: 0xFFFFFF, intensity: 2.0, position: [0, -10, -1] },
       { color: 0xFFFFFF, intensity: 2.0, position: [-10, 0, 0] }
     ];
     
@@ -164,11 +169,13 @@ export class BrownianViewer {
     this.timeStep = 0.0001;
     this.bacteriaSD = Math.sqrt(2 * this.diffusionCoefficientBacteria * this.timeStep);
     this.bacteriaSD *= 1e6 / 0.641;
-    this.cellRadius = 5/0.641;
+    
+    // Define cubic boundary parameters
+    this.boxSize = 7; // Size of the cubic box (half-width)
     this.physicsTimeStep = 1/60;
     
     // MIPS parameters
-    this.selfPropulsionSpeed = 5.0; // Self-propulsion velocity
+    this.selfPropulsionSpeed = 100; // Self-propulsion velocity
     this.rotationalDiffusionCoefficient = 0.5; // Controls how quickly particles change direction
     
     this.isARMode = false;
@@ -180,6 +187,15 @@ export class BrownianViewer {
     this.setupTouchInteraction();
     this.cellGroup = new THREE.Group();
     this.scene.add(this.cellGroup);
+  }
+  
+  createBoundaryBox() {
+    // Create a wireframe box to visualize the boundary
+    const boxGeometry = new THREE.BoxGeometry(this.boxSize * 2, this.boxSize * 2, this.boxSize * 2);
+    const wireframe = new THREE.EdgesGeometry(boxGeometry);
+    const boxMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.6 });
+    const box = new THREE.LineSegments(wireframe, boxMaterial);
+    this.cellGroup.add(box);
   }
   
   setupTouchInteraction() {
@@ -228,25 +244,25 @@ export class BrownianViewer {
     };
   }
   
-  createParticles(size, segments, color, number, particleGroup, minRadius, maxRadius) {
+  createParticles(size, segments, color, number, particleGroup, boxSize) {
     const geometry = new THREE.SphereGeometry(size, segments, segments);
-    const material = new THREE.MeshPhongMaterial({ emissive: color, emissiveIntensity: 1 });
-
-    
+    const material = new THREE.MeshPhongMaterial({ 
+      emissive: color, 
+      emissiveIntensity: 1,
+      transparent: true, 
+      opacity: 0.8 
+    });
 
     for (let i = 0; i < number; i++) {
       const particle = new THREE.Mesh(geometry, material);
-      const randomUnitVector = () => new THREE.Vector3(
-        Math.random() - 0.5,
-        Math.random() - 0.5,
-        Math.random() - 0.5
-      ).normalize();
       
-      const randomPosition = () => randomUnitVector().multiplyScalar(
-        Math.random() * (maxRadius - minRadius) + minRadius
+      // Generate random position within the cubic box
+      const position = new THREE.Vector3(
+        (Math.random() * 2 - 1) * boxSize,
+        (Math.random() * 2 - 1) * boxSize,
+        (Math.random() * 2 - 1) * boxSize
       );
       
-      const position = randomPosition();
       particle.position.set(position.x, position.y, position.z);
       this.cellGroup.add(particle);
       particleGroup.push(particle);
@@ -258,10 +274,14 @@ export class BrownianViewer {
       rigidBody.userData = { threeObject: particle };
       this.rigidBodies.push(rigidBody);
       
-      // Initialize random 3D orientation
-      // Store as a unit vector for 3D orientation
-      const orientation = randomUnitVector();
-      this.bacteriaOrientations.push(orientation);
+      // Initialize random 3D orientation as a unit vector
+      const randomUnitVector = new THREE.Vector3(
+        Math.random() - 0.5,
+        Math.random() - 0.5,
+        Math.random() - 0.5
+      ).normalize();
+      
+      this.bacteriaOrientations.push(randomUnitVector);
     }
   }
   
@@ -285,8 +305,32 @@ export class BrownianViewer {
     }
   }
   
-  // Modified to include self-propulsion based on 3D orientation
-  brownianMotion(sd, molecules, maxRadius) {
+  // Apply periodic boundary conditions
+  applyPeriodicBoundary(position) {
+    // Check each dimension and wrap if needed
+    if (position.x > this.boxSize) {
+      position.x -= this.boxSize * 2;
+    } else if (position.x < -this.boxSize) {
+      position.x += this.boxSize * 2;
+    }
+    
+    if (position.y > this.boxSize) {
+      position.y -= this.boxSize * 2;
+    } else if (position.y < -this.boxSize) {
+      position.y += this.boxSize * 2;
+    }
+    
+    if (position.z > this.boxSize) {
+      position.z -= this.boxSize * 2;
+    } else if (position.z < -this.boxSize) {
+      position.z += this.boxSize * 2;
+    }
+    
+    return position;
+  }
+  
+  // Modified to include self-propulsion based on 3D orientation with periodic boundary
+  brownianMotion(sd, molecules) {
     for (let i = 0; i < molecules.length; i++) {
       const rigidBody = this.rigidBodies[i];
       const orientation = this.bacteriaOrientations[i];
@@ -312,34 +356,8 @@ export class BrownianViewer {
         currentPosition.z + (this.selfPropulsionSpeed * orientationVector.z * this.timeStep) + deltaZ
       );
       
-      // Apply boundary constraints
-      if (newPosition.length() > maxRadius) {
-        newPosition.setLength(maxRadius);
-        
-        // When hitting the boundary, reflect the orientation (bounce)
-        const normal = newPosition.clone().normalize();
-        
-        // Calculate dot product between orientation and normal
-        const dot = orientationVector.x * normal.x + 
-                    orientationVector.y * normal.y + 
-                    orientationVector.z * normal.z;
-        
-        // Calculate reflected orientation vector (v - 2(v·n)n)
-        orientation.x = orientationVector.x - 2 * dot * normal.x;
-        orientation.y = orientationVector.y - 2 * dot * normal.y;
-        orientation.z = orientationVector.z - 2 * dot * normal.z;
-        
-        // Normalize the reflected orientation
-        const length = Math.sqrt(
-          orientation.x * orientation.x + 
-          orientation.y * orientation.y + 
-          orientation.z * orientation.z
-        );
-        
-        orientation.x /= length;
-        orientation.y /= length;
-        orientation.z /= length;
-      }
+      // Apply periodic boundary conditions
+      this.applyPeriodicBoundary(newPosition);
       
       // Update rigid body position
       rigidBody.setTranslation(
@@ -353,8 +371,8 @@ export class BrownianViewer {
     // Update orientations with rotational diffusion
     this.updateOrientations(this.timeStep);
     
-    // Apply Brownian motion with self-propulsion
-    this.brownianMotion(this.bacteriaSD, this.bacteria, this.cellRadius);
+    // Apply Brownian motion with self-propulsion and periodic boundary
+    this.brownianMotion(this.bacteriaSD, this.bacteria);
     
     // Step the physics world forward
     this.world.step();

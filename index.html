@@ -18,11 +18,11 @@
   <style>
     #controls {
       position: absolute;
-      top: 10px;
-      left: 10px;
-      background-color: rgba(0, 0, 0, 0.7);
+      top: 5px;
+      left: 5px;
+      background-color: rgba(0, 0, 0, 0.45);
       color: white;
-      padding: 10px;
+      padding: 5px;
       border-radius: 5px;
       z-index: 100;
       font-family: Arial, sans-serif;
@@ -30,11 +30,11 @@
     
     #controls h3 {
       margin-top: 0;
-      margin-bottom: 10px;
+      margin-bottom: 5px;
     }
     
     .control-group {
-      margin-bottom: 10px;
+      margin-bottom: 5px;
     }
     
     label {
@@ -54,8 +54,8 @@
     }
     
     button {
-      margin-top: 10px;
-      padding: 5px 10px;
+      margin-top: 2px;
+      padding: 5px 2px;
       background-color: #4CAF50;
       color: white;
       border: none;
@@ -70,10 +70,9 @@
 </head>
 <body>
   <div id="controls">
-    <h3>MIPS Parameters</h3>
     <div class="control-group">
       <label for="selfPropulsionSpeed">Self-Propulsion Speed:</label>
-      <input type="range" id="selfPropulsionSpeed" min="0" max="1000" step="0.5" value="5">
+      <input type="range" id="selfPropulsionSpeed" min="0" max="1000" step="1" value="100">
       <span id="selfPropulsionSpeedValue" class="value-display">5.0</span>
     </div>
     <div class="control-group">
