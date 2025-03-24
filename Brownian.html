@@ -295,15 +295,14 @@ class BrownianViewer {
       
       if (minY !== undefined && molecule.position.y < minY) {
         molecule.position.y = minY;
-      }
-    });
+      } 
+    });  
   }
 
-  animate() {
+  animate(){
  
     this.brownianMotion(this.bacteriaSD, this.bacteria, 0, this.cellRadius*2);
     
-    // AR hit testing
     if (this.isARMode) {
       this.handleARHitTest();
     }
