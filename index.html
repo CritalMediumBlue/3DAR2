@@ -39,7 +39,7 @@ class BrownianViewer {
     this.initProperties();
     this.initPhysics();
 
-    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 100, this.bacteria, 0, this.cellRadius); // Extra cellular molecules
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1000, this.bacteria, 0, this.cellRadius*2); // Extra cellular molecules
     
     this.setupAR();
     this.animate();
@@ -344,7 +344,7 @@ class BrownianViewer {
 
   animate(){
     // Apply Brownian motion (set new positions)
-    this.brownianMotion(this.bacteriaSD, this.bacteria, 0, this.cellRadius*1);
+    this.brownianMotion(this.bacteriaSD, this.bacteria, 0, this.cellRadius*2);
     
     // Step the physics world forward to handle collisions
     this.world.step();
