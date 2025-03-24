@@ -92,6 +92,137 @@
     <button id="resetButton">Reset Simulation</button>
   </div>
   
-  <script type="module" src="js/main.js"></script>
+  <!-- Use the modular approach but ensure AR functionality works -->
+  <script type="module">
+    import * as THREE from 'three';
+    import { BrownianViewer } from './js/BrownianViewer.js';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+    
+    // Override the ARHandler initialization to ensure it works correctly
+    const originalBrownianViewer = BrownianViewer;
+    
+    // Extend BrownianViewer to ensure AR functionality works properly
+    class EnhancedBrownianViewer extends originalBrownianViewer {
+      constructor() {
+        super();
+        
+        // Ensure AR is properly initialized
+        this.setupEnhancedAR();
+      }
+      
+      setupEnhancedAR() {
+        // Make sure the AR button is created correctly
+        if (!document.querySelector('.ARButton')) {
+          const arButton = ARButton.createButton(this.renderer, {
+            requiredFeatures: ['hit-test'],
+            optionalFeatures: ['dom-overlay'],
+            domOverlay: { root: document.body }
+          });
+          
+          document.body.appendChild(arButton);
+        }
+        
+        // Ensure the renderer has WebXR enabled
+        this.renderer.xr.enabled = true;
+        
+        // Make sure the reticle is properly set up
+        if (!this.reticle) {
+          const reticleGeometry = new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2);
+          const reticleMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ffff,
+            transparent: true, 
+            opacity: 0.3, 
+            side: THREE.DoubleSide
+          });
+          
+          this.reticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
+          this.reticle.matrixAutoUpdate = false;
+          this.reticle.visible = false;
+          this.scene.add(this.reticle);
+        }
+        
+        // Ensure controller is set up
+        if (!this.controller) {
+          this.controller = this.renderer.xr.getController(0);
+          this.controller.addEventListener('select', this.onSelect.bind(this));
+          this.scene.add(this.controller);
+        }
+      }
+      
+      // Override onSelect to ensure it works correctly
+      onSelect() {
+        if (this.reticle && this.reticle.visible && !this.modelPlaced) {
+          // Place the cell group at the reticle position
+          this.cellGroup.position.setFromMatrixPosition(this.reticle.matrix);
+          
+          this.cellGroup.scale.set(0.05, 0.05, 0.05);
+          this.reticle.visible = false;
+          this.cellGroup.visible = true;
+          this.modelPlaced = true;
+          this.cellGroup.position.y += 0.8; // Offset to avoid clipping with the ground
+          
+          if (this.arHandler && this.arHandler.onModelPlaced) {
+            this.arHandler.onModelPlaced();
+          }
+        }
+      }
+      
+      // Override handleHitTest to ensure it works correctly
+      handleARHitTest() {
+        if (!this.hitTestSourceRequested) {
+          const session = this.renderer.xr.getSession();
+          
+          if (session) {
+            session.requestReferenceSpace('viewer').then((referenceSpace) => {
+              session.requestHitTestSource({ space: referenceSpace }).then((source) => {
+                this.hitTestSource = source;
+              });
+            });
+            
+            session.addEventListener('end', () => {
+              this.hitTestSourceRequested = false;
+              this.hitTestSource = null;
+            });
+            
+            this.hitTestSourceRequested = true;
+          }
+        }
+        
+        if (this.hitTestSource) {
+          const referenceSpace = this.renderer.xr.getReferenceSpace();
+          const frame = this.renderer.xr.getFrame();
+          
+          if (frame) {
+            const hitTestResults = frame.getHitTestResults(this.hitTestSource);
+            
+            if (hitTestResults.length && !this.modelPlaced) {
+              const hit = hitTestResults[0];
+              const pose = hit.getPose(referenceSpace);
+              
+              if (pose) {
+                this.reticle.visible = true;
+                this.reticle.matrix.fromArray(pose.transform.matrix);
+              }
+            } else {
+              this.reticle.visible = false;
+            }
+          }
+        }
+      }
+      
+      // Override animate to ensure AR hit testing is called
+      animate() {
+        super.animate();
+        
+        // Ensure AR hit testing is called
+        if (this.isARMode) {
+          this.handleARHitTest();
+        }
+      }
+    }
+    
+    // Initialize the enhanced viewer
+    document.addEventListener('DOMContentLoaded', () => new EnhancedBrownianViewer());
+  </script>
 </body>
 </html>

@@ -11,6 +11,11 @@ export class ARHandler {
     this.hitTestSourceRequested = false;
     this.modelPlaced = false;
     
+    // Callback functions
+    this.onSessionStart = null;
+    this.onSessionEnd = null;
+    this.onModelPlaced = null;
+    
     this.setupAR();
   }
   

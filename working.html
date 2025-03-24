@@ -1,0 +1,516 @@
+<!-- Erick Pena
+Cap4720
+Final Project: Cell Model -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title> 3D Cell Model </title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      
+  }
+  }
+  </script>
+ 
+</head>
+<body>
+  <script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+class CellViewer {
+  constructor() {
+    this.start();
+  }
+
+  start(){
+    this.initScene();
+    this.initProperties();
+    this.loadCellModel();
+
+    this.createParticles(this.viralRadius, 1, 0x0000ff, 50, this.viralParticles, this.cellRadius, this.cellRadius*3); // Viral particles
+    this.createParticles(this.proteinRadius, 1, 0x00ff00, 500, this.proteins, this.cellRadius/3, this.cellRadius); // Proteins
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 20, this.bacteria, this.cellRadius, this.cellRadius*3); // Extra cellular molecules
+    
+    this.createCellMembrane();
+    this.setupAR();
+    this.animate();
+  }
+
+  initScene() {
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.001, 3000);
+    this.camera.position.set(20, 20, 20);
+    this.camera.lookAt(0, 0, 0);
+
+    this.renderer = new THREE.WebGLRenderer({ 
+      antialias: true,
+      alpha: true // Transparent background for AR
+    });
+    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.xr.enabled = true; // Enable WebXR
+    document.body.appendChild(this.renderer.domElement);
+    
+    // Handle window resize
+    window.addEventListener('resize', this.onWindowResize.bind(this), false);
+    this.lightGroup = new THREE.Group();
+    this.scene.add(this.lightGroup);
+    
+    const lights = [
+      { color: 0xFFFFFF, intensity: 2.0, position: [3, 10, 3] },
+      { color: 0xFFFFFF, intensity: 2.5, position: [0, -5, -1] },
+      { color: 0xFFFFFF, intensity: 2.50, position: [-10, 0, 0] }
+    ];
+    
+    lights.forEach(({ color, intensity, position }) => {
+      const light = new THREE.DirectionalLight(color, intensity);
+      light.position.set(...position).normalize();
+      this.lightGroup.add(light);
+    });
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+
+  }
+  
+  onWindowResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+ 
+
+  initProperties() {
+    this.proteins = [];
+    this.viralParticles = [];
+    this.bacteria = [];
+
+    /*
+     * BROWNIAN MOTION PHYSICS PARAMETERS
+     * 
+     * Brownian motion is the random movement of particles suspended in a fluid (liquid or gas),
+     * resulting from their bombardment by fast-moving atoms or molecules in the fluid.
+     * 
+     * The key physical parameters that determine Brownian motion are:
+     * 1. Temperature - Higher temperature means more energetic molecular collisions
+     * 2. Viscosity - Higher viscosity means more resistance to movement
+     * 3. Particle size - Smaller particles exhibit more pronounced Brownian motion
+     */
+    
+    // Realistic size scales for cellular components
+    // Round bacteria are around 1 micrometer in diameter
+    // The average human cell is around 20 micrometers in diameter
+    // The average virus particle is around 0.1 micrometers in diameter
+    // The average protein is around 7-10 nanometers in diameter (0.01 micrometers)
+    
+    // Physical constants and environmental parameters
+    const temperatureKelvin = 310; // Body temperature in Kelvin (37°C)
+    const waterViscosity = 0.0008; // Water viscosity in Pa·s at body temperature
+    const cytoplasmViscosity = 6 * waterViscosity; // Cytoplasm is more viscous than water (about 5.5 times)
+    
+    // Boltzmann constant (k_B) relates temperature to energy
+    // Units: J/K (Joules per Kelvin)
+    const boltzmannConstant = 1.38e-23; 
+    
+    // Particle radii (We need to convert these to meters for the Stokes-Einstein equation)
+    this.proteinRadius = 0.006; // 6 nanometers in radius. 12 nanometers in diameter 
+    this.viralRadius = 0.05;    // 50 nanometers in radius (0.05 micrometers)
+    this.bacteriaRadius = 0.5;  // 500 nanometers in radius (0.5 micrometers)
+
+    /*
+     * STOKES-EINSTEIN RELATION
+     * 
+     * The diffusion coefficient (D) is calculated using the Stokes-Einstein equation:
+     * D = k_B·T / (6πηr)
+     * 
+     * Where:
+     * - k_B is Boltzmann's constant (1.38e-23 J/K)
+     * - T is temperature in Kelvin
+     * - η (eta) is the fluid viscosity in Pa·s
+     * - r is the particle radius in meters
+     * 
+     * This equation shows that:
+     * 1. Diffusion increases with temperature (more thermal energy)
+     * 2. Diffusion decreases with viscosity (more resistance)
+     * 3. Diffusion decreases with particle size (larger particles move less)
+     */
+    this.diffusionCoefficientProtein = boltzmannConstant * temperatureKelvin / (6 * Math.PI * cytoplasmViscosity * this.proteinRadius*(1/1e6));
+    this.diffusionCoefficientVirus = boltzmannConstant * temperatureKelvin / (6 * Math.PI * waterViscosity * this.viralRadius*(1/1e6));
+    this.diffusionCoefficientBacteria = boltzmannConstant * temperatureKelvin / (6 * Math.PI * waterViscosity * this.bacteriaRadius*(1/1e6));
+    
+    /*
+     * TIME STEP IN BROWNIAN MOTION
+     * 
+     * In the context of the Stokes-Einstein and Einstein-Smoluchowski equations,
+     * the time step must have units of seconds (s) to maintain dimensional consistency.
+     * 
+     * Since the diffusion coefficient D has units of m²/s (square meters per second),
+     * and we use it in the equation: SD = √(2·D·Δt)
+     * 
+     * For SD to have units of meters (m), the time step Δt must have units of seconds (s).
+     * 
+     * The value 10 here represents 10 seconds in the simulation.
+     * This is a relatively large time step chosen for visualization purposes.
+     * In a more precise simulation, a smaller time step would be used.
+     */
+    this.timeStep = 0.0001; // seconds
+
+    /*
+     * EINSTEIN-SMOLUCHOWSKI EQUATION
+     * 
+     * The mean squared displacement (MSD) of a particle undergoing Brownian motion is:
+     * MSD = 2·D·t (in 1D) or MSD = 4·D·t (in 2D) or MSD = 6·D·t (in 3D)
+     * 
+     * For a single step in a random walk, the standard deviation (σ) of displacement is:
+     * σ = √(2·D·Δt) for each dimension
+     * 
+     * This means the displacement in each direction follows a normal distribution with:
+     * - Mean = 0 (random motion has no preferred direction)
+     * - Standard deviation = √(2·D·Δt)
+     */
+    // Calculate standard deviations based on the Einstein-Smoluchowski equation
+    this.proteinSD = Math.sqrt(2 * this.diffusionCoefficientProtein * this.timeStep);
+    this.virusSD = Math.sqrt(2 * this.diffusionCoefficientVirus * this.timeStep);
+    this.bacteriaSD = Math.sqrt(2 * this.diffusionCoefficientBacteria * this.timeStep);
+
+    // Convert standard deviations from meters to micrometers and then to the scale of the scene
+    this.proteinSD *= 1e6 /0.641;
+    this.virusSD *= 1e6 /0.641;
+    this.bacteriaSD *= 1e6 /0.641;
+
+  
+    this.cellRadius = 5/0.641; //10 micrometers in diameter
+    this.isARMode = false;
+    this.reticle = null;
+    this.hitTestSource = null;
+    this.hitTestSourceRequested = false;
+    this.modelPlaced = false;
+    
+    // Touch interaction properties
+    this.touchStartX = 0;
+    this.touchStartY = 0;
+    
+  
+    // Add touch event listeners for AR interaction
+    this.setupTouchInteraction();
+    // Create a group to hold all cell-related objects for easier manipulation in AR
+    this.cellGroup = new THREE.Group();
+    this.scene.add(this.cellGroup);
+  }
+  
+  setupTouchInteraction() {
+    // Touch events for rotating and scaling the model in AR mode
+    document.addEventListener('touchstart', (event) => {
+      if (this.isARMode && this.modelPlaced && event.touches.length > 0) {
+        this.touchStartX = event.touches[0].clientX;
+        this.touchStartY = event.touches[0].clientY;
+      }
+    });
+    
+    document.addEventListener('touchmove', (event) => {
+      if (this.isARMode && this.modelPlaced && event.touches.length > 0) {
+        // Prevent default to avoid scrolling the page
+        event.preventDefault();
+        
+        // Single touch for rotation
+        if (event.touches.length === 1) {
+          const touchX = event.touches[0].clientX;
+          const touchY = event.touches[0].clientY;
+          
+          // Calculate the rotation based on horizontal movement
+          const deltaX = touchX - this.touchStartX;
+          this.cellGroup.rotation.y += deltaX * 0.01;
+
+          const deltaY = touchY - this.touchStartY;
+          this.cellGroup.rotation.x += deltaY * 0.01;
+          
+          // Update the starting position
+          this.touchStartX = touchX;
+          this.touchStartY = touchY;
+        }
+      }
+    }, { passive: false });
+  }
+
+  
+ 
+  
+  setupAR() {
+    // Create AR button
+    const arButton = ARButton.createButton(this.renderer, {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body }
+    });
+    
+    document.body.appendChild(arButton);
+    
+    // Create reticle for AR placement
+    const reticleGeometry = new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2);
+    const reticleMaterial = new THREE.MeshBasicMaterial({color: 0x00ffff,transparent: true, opacity: 0.3, side: THREE.DoubleSide});
+    this.reticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
+    this.reticle.matrixAutoUpdate = false;
+    this.reticle.visible = false;
+    this.scene.add(this.reticle);
+  
+    // Set up controller for AR interaction
+    this.controller = this.renderer.xr.getController(0);
+    this.controller.addEventListener('select', this.onSelect.bind(this));
+    this.scene.add(this.controller);
+    
+    // Listen for session start/end to toggle between AR and 3D modes
+    this.renderer.xr.addEventListener('sessionstart', () => {
+      this.isARMode = true;
+      this.cellGroup.visible = false; // Hide until placed
+      this.modelPlaced = false;
+      
+      // Disable OrbitControls in AR mode
+      if (this.controls) {
+        this.controls.enabled = false;
+      }
+    });
+    
+
+  }
+  
+  onSelect() {
+    if (this.reticle.visible && !this.modelPlaced) {
+      // Place the cell group at the reticle position
+      this.cellGroup.position.setFromMatrixPosition(this.reticle.matrix);
+      
+
+      this.cellGroup.scale.set(0.05, 0.05, 0.05);
+      //hide the reticle after placing the model
+      this.reticle.visible = false;
+      this.cellGroup.visible = true;
+      this.modelPlaced = true;
+      this.cellGroup.position.y += 0.8; // Offset to avoid clipping with the ground
+    }
+  }
+
+  
+  loadCellModel() {
+      const gltfLoader = new GLTFLoader();
+      //set current path
+      gltfLoader.setPath('./');
+      gltfLoader.load("cell.glb", (gltf) => { // Use the .glb file instead of .gltf
+          const object = gltf.scene; // Access the loaded 3D scene
+          object.scale.set(0.15, 0.15, 0.15); // Scale the model
+          object.position.set(0.2, -7.95, 0.2); // Position the model
+          this.cellGroup.add(object); // Add the model to the cell group
+      });
+  }
+  createParticles(size, segments, color, number, particleGroup, minRadius, maxRadius) {
+    const geometry = new THREE.SphereGeometry(size, segments, segments);
+    const material = new THREE.MeshPhongMaterial({ emissive: color, emissiveIntensity: 1 });
+
+    for (let i = 0; i < number; i++) {
+      const particle = new THREE.Mesh(geometry, material);
+      const randomUnitVector = () => new THREE.Vector3(
+        Math.random() - 0.5,
+        Math.random() - 0.5,
+        Math.random() - 0.5
+      ).normalize();  // Added parentheses here
+      const randomPosition = () => randomUnitVector().multiplyScalar(
+        Math.random() * (maxRadius - minRadius) + minRadius
+      );
+      particle.position.set(
+        randomPosition().x,
+        randomPosition().y,
+        randomPosition().z
+      );
+      this.cellGroup.add(particle);
+      particleGroup.push(particle);
+    }
+  }
+
+  createCellMembrane() {
+    const geometry = new THREE.SphereGeometry(this.cellRadius, 64, 64);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x0000ff,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.2
+    });
+    this.cellGroup.add(new THREE.Mesh(geometry, material));
+  }
+
+  /*
+   * BOX-MULLER TRANSFORM FOR GAUSSIAN RANDOM NUMBERS
+   * 
+   * Brownian motion requires normally distributed random displacements.
+   * The Box-Muller transform converts uniform random numbers to normally distributed ones.
+   * 
+   * Theory:
+   * If u1 and u2 are uniform random numbers in (0,1), then:
+   * z0 = sqrt(-2·ln(u1))·cos(2π·u2)
+   * z1 = sqrt(-2·ln(u1))·sin(2π·u2)
+   * 
+   * z0 and z1 are independent random variables with standard normal distribution.
+   * 
+   * This implementation uses a polar form of the Box-Muller transform which is more
+   * computationally efficient and avoids trigonometric functions.
+   */
+  normalPolar(mean = 0, sd = 1) {
+    let u1, u2, s;
+
+    // Generate two uniform random numbers in the range (-1, 1) until they lie inside the unit circle
+    do {
+      u1 = Math.random() * 2 - 1; // Random number in (-1, 1)
+      u2 = Math.random() * 2 - 1; // Random number in (-1, 1)
+      s = u1 * u1 + u2 * u2;      // Compute s = u1^2 + u2^2
+    } while (s >= 1 || s === 0);  // Discard if outside the unit circle or s == 0
+
+    // Compute the scaling factor using the polar form of Box-Muller transform
+    const factor = Math.sqrt(-2.0 * Math.log(s) / s);
+
+    // Generate two independent standard normal random variables
+    const z0 = u1 * factor;
+    const z1 = u2 * factor;
+
+    // Scale by the desired standard deviation and shift by the mean
+    return [mean + z0 * sd, mean + z1 * sd];
+  }
+  
+
+  /*
+   * BROWNIAN MOTION IMPLEMENTATION
+   * 
+   * This function simulates the random walk characteristic of Brownian motion.
+   * Key theoretical aspects:
+   * 
+   * 1. Each step is independent of previous steps (Markov process)
+   * 2. Displacements follow a normal distribution with mean 0
+   * 3. The standard deviation of displacement is determined by:
+   *    - Diffusion coefficient (from Stokes-Einstein)
+   *    - Time step
+   * 
+   * In 3D space, we apply random displacements in all three dimensions.
+   * Boundary conditions are applied to keep particles within realistic regions.
+   * 
+   * Parameters:
+   * - sd: Standard deviation of displacement (calculated from diffusion coefficient)
+   * - molecules: Array of particles to move
+   * - minRadius/maxRadius: Boundary constraints (e.g., cell membrane)
+   * - minZ/minY: Additional boundary constraints if needed
+   */
+  brownianMotion(sd, molecules, minRadius, maxRadius, minZ, minY) {
+    molecules.forEach(molecule => {
+      // Generate normally distributed random displacements for X and Y coordinates
+      const [deltaX, deltaY] = this.normalPolar(0, sd);
+      
+      // Generate normally distributed random displacement for Z coordinate
+      const deltaZ = this.normalPolar(0, sd)[0];
+      
+      // Apply the random displacement to the particle position
+      // This is the core of the random walk process
+      molecule.position.add(new THREE.Vector3(
+        deltaX,
+        deltaY,
+        deltaZ
+      ));
+      
+      // Apply boundary conditions to keep particles within realistic regions
+      
+      // Keep particles within maximum radius (e.g., cell boundary)
+      if (molecule.position.length() > maxRadius) {
+        molecule.position.setLength(maxRadius);
+      }
+      
+      // Keep particles outside minimum radius (e.g., nucleus or other structures)
+      if (molecule.position.length() < minRadius) {
+        molecule.position.setLength(minRadius);
+      }
+      
+      // Additional boundary constraints if specified
+      if (minZ !== undefined && molecule.position.z < minZ) {
+        molecule.position.z = minZ;
+      }
+      
+      if (minY !== undefined && molecule.position.y < minY) {
+        molecule.position.y = minY;
+      }
+    });
+  }
+
+  animate() {
+    // Apply Brownian motion to different particle types
+    // Note how each particle type has its own standard deviation (SD) based on its size and environment
+    
+    // Viral particles: Larger SD than proteins but smaller than bacteria
+    // Move in extracellular space (between cellRadius and cellRadius*3)
+    this.brownianMotion(this.virusSD, this.viralParticles, this.cellRadius, this.cellRadius*3);
+    
+    // Proteins: Smallest particles, highest diffusion coefficient, but in viscous cytoplasm
+    // Move within the cell (between cellRadius/3 and cellRadius)
+    this.brownianMotion(this.proteinSD, this.proteins, this.cellRadius/3, this.cellRadius, 0, 0);
+    
+    // Bacteria: Largest particles, lowest diffusion coefficient
+    // Move in extracellular space (between cellRadius and cellRadius*3)
+    this.brownianMotion(this.bacteriaSD, this.bacteria, this.cellRadius, this.cellRadius*3);
+    
+    // AR hit testing
+    if (this.isARMode) {
+      this.handleARHitTest();
+    }
+    
+    this.renderer.setAnimationLoop(this.animate.bind(this));
+    this.renderer.render(this.scene, this.camera);
+  }
+  
+  handleARHitTest() {
+    if (!this.hitTestSourceRequested) {
+      const session = this.renderer.xr.getSession();
+      
+      if (session) {
+        session.requestReferenceSpace('viewer').then((referenceSpace) => {
+          session.requestHitTestSource({ space: referenceSpace }).then((source) => {
+            this.hitTestSource = source;
+          });
+        });
+        
+        session.addEventListener('end', () => {
+          this.hitTestSourceRequested = false;
+          this.hitTestSource = null;
+        });
+        
+        this.hitTestSourceRequested = true;
+      }
+    }
+    
+    if (this.hitTestSource) {
+      const referenceSpace = this.renderer.xr.getReferenceSpace();
+      const frame = this.renderer.xr.getFrame();
+      
+      if (frame) {
+        const hitTestResults = frame.getHitTestResults(this.hitTestSource);
+        
+        if (hitTestResults.length && !this.modelPlaced) { // Only show the reticle if the model is not placed
+          const hit = hitTestResults[0];
+          const pose = hit.getPose(referenceSpace);
+          
+          if (pose) {
+            this.reticle.visible = true;
+            this.reticle.matrix.fromArray(pose.transform.matrix);
+          }
+        } else {
+          this.reticle.visible = false;
+        }
+      }
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => new CellViewer());
+
+  </script>
+</body>
+</html>
