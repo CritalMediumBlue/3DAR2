@@ -1,0 +1,362 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title> 3D Cell Model </title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      
+  }
+  }
+  </script>
+ 
+</head>
+<body>
+  <script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+class BrownianViewer {
+  constructor() {
+    this.start();
+  }
+
+  start(){
+    this.initScene();
+    this.initProperties();
+
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 100, this.bacteria, 0, this.cellRadius*2); // Extra cellular molecules
+    
+    this.setupAR();
+    this.animate();
+  }
+
+  initScene() {
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.001, 3000);
+    this.camera.position.set(20, 20, 20);
+    this.camera.lookAt(0, 0, 0);
+
+    this.renderer = new THREE.WebGLRenderer({ 
+      antialias: true,
+      alpha: true // Transparent background for AR
+    });
+    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.xr.enabled = true; // Enable WebXR
+    document.body.appendChild(this.renderer.domElement);
+    
+    // Handle window resize
+    window.addEventListener('resize', this.onWindowResize.bind(this), false);
+    this.lightGroup = new THREE.Group();
+    this.scene.add(this.lightGroup);
+    
+    const lights = [
+      { color: 0xFFFFFF, intensity: 2.0, position: [3, 10, 3] },
+      { color: 0xFFFFFF, intensity: 2.0, position: [0, -5, -1] },
+      { color: 0xFFFFFF, intensity: 2.0, position: [-10, 0, 0] }
+    ];
+    
+    lights.forEach(({ color, intensity, position }) => {
+      const light = new THREE.DirectionalLight(color, intensity);
+      light.position.set(...position).normalize();
+      this.lightGroup.add(light);
+    });
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+
+  }
+  
+  onWindowResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+ 
+
+  initProperties() {
+   
+    this.bacteria = [];
+
+    
+    // Physical constants and environmental parameters
+    const temperatureKelvin = 310; // Body temperature in Kelvin (37°C)
+    const waterViscosity = 0.0008; // Water viscosity in Pa·s at body temperature
+    const cytoplasmViscosity = 6 * waterViscosity; // Cytoplasm is more viscous than water (about 5.5 times)
+    
+
+    const boltzmannConstant = 1.38e-23; 
+    
+
+    this.bacteriaRadius = 0.3;  // 500 nanometers in radius (0.5 micrometers)
+
+    this.diffusionCoefficientBacteria = boltzmannConstant * temperatureKelvin / (6 * Math.PI * waterViscosity * this.bacteriaRadius*(1/1e6));
+    
+  
+    this.timeStep = 0.0001; // seconds
+
+ 
+    this.bacteriaSD = Math.sqrt(2 * this.diffusionCoefficientBacteria * this.timeStep);
+
+    // Convert standard deviations from meters to micrometers and then to the scale of the scene
+  
+    this.bacteriaSD *= 1e6 /0.641;
+
+  
+    this.cellRadius = 5/0.641; //10 micrometers in diameter
+    this.isARMode = false;
+    this.reticle = null;
+    this.hitTestSource = null;
+    this.hitTestSourceRequested = false;
+    this.modelPlaced = false;
+    
+    // Touch interaction properties
+    this.touchStartX = 0;
+    this.touchStartY = 0;
+    
+  
+    this.setupTouchInteraction();
+    this.cellGroup = new THREE.Group();
+    this.scene.add(this.cellGroup);
+  }
+  
+  setupTouchInteraction() {
+    // Touch events for rotating and scaling the model in AR mode
+    document.addEventListener('touchstart', (event) => {
+      if (this.isARMode && this.modelPlaced && event.touches.length > 0) {
+        this.touchStartX = event.touches[0].clientX;
+        this.touchStartY = event.touches[0].clientY;
+      }
+    });
+    
+    document.addEventListener('touchmove', (event) => {
+      if (this.isARMode && this.modelPlaced && event.touches.length > 0) {
+        // Prevent default to avoid scrolling the page
+        event.preventDefault();
+        
+        // Single touch for rotation
+        if (event.touches.length === 1) {
+          const touchX = event.touches[0].clientX;
+          const touchY = event.touches[0].clientY;
+          
+          // Calculate the rotation based on horizontal movement
+          const deltaX = touchX - this.touchStartX;
+          this.cellGroup.rotation.y += deltaX * 0.01;
+
+          const deltaY = touchY - this.touchStartY;
+          this.cellGroup.rotation.x += deltaY * 0.01;
+          
+          // Update the starting position
+          this.touchStartX = touchX;
+          this.touchStartY = touchY;
+        }
+      }
+    }, { passive: false });
+  }
+
+  
+ 
+  
+  setupAR() {
+    // Create AR button
+    const arButton = ARButton.createButton(this.renderer, {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body }
+    });
+    
+    document.body.appendChild(arButton);
+    
+    // Create reticle for AR placement
+    const reticleGeometry = new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2);
+    const reticleMaterial = new THREE.MeshBasicMaterial({color: 0x00ffff,transparent: true, opacity: 0.3, side: THREE.DoubleSide});
+    this.reticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
+    this.reticle.matrixAutoUpdate = false;
+    this.reticle.visible = false;
+    this.scene.add(this.reticle);
+  
+    // Set up controller for AR interaction
+    this.controller = this.renderer.xr.getController(0);
+    this.controller.addEventListener('select', this.onSelect.bind(this));
+    this.scene.add(this.controller);
+    
+    // Listen for session start/end to toggle between AR and 3D modes
+    this.renderer.xr.addEventListener('sessionstart', () => {
+      this.isARMode = true;
+      this.cellGroup.visible = false; // Hide until placed
+      this.modelPlaced = false;
+      
+      // Disable OrbitControls in AR mode
+      if (this.controls) {
+        this.controls.enabled = false;
+      }
+    });
+    
+
+  }
+  
+  onSelect() {
+    if (this.reticle.visible && !this.modelPlaced) {
+      // Place the cell group at the reticle position
+      this.cellGroup.position.setFromMatrixPosition(this.reticle.matrix);
+      
+      this.cellGroup.scale.set(0.05, 0.05, 0.05);
+      //hide the reticle after placing the model
+      this.reticle.visible = false;
+      this.cellGroup.visible = true;
+      this.modelPlaced = true;
+      this.cellGroup.position.y += 0.8; // Offset to avoid clipping with the ground
+    }
+  }
+
+  
+  createParticles(size, segments, color, number, particleGroup, minRadius, maxRadius) {
+    const geometry = new THREE.SphereGeometry(size, segments, segments);
+    const material = new THREE.MeshPhongMaterial({ emissive: color, emissiveIntensity: 1 });
+
+    for (let i = 0; i < number; i++) {
+      const particle = new THREE.Mesh(geometry, material);
+      const randomUnitVector = () => new THREE.Vector3(
+        Math.random() - 0.5,
+        Math.random() - 0.5,
+        Math.random() - 0.5
+      ).normalize();  // Added parentheses here
+      const randomPosition = () => randomUnitVector().multiplyScalar(
+        Math.random() * (maxRadius - minRadius) + minRadius
+      );
+      particle.position.set(
+        randomPosition().x,
+        randomPosition().y,
+        randomPosition().z
+      );
+      this.cellGroup.add(particle);
+      particleGroup.push(particle);
+    }
+  }
+
+
+
+  normalPolar(mean = 0, sd = 1) {
+    let u1, u2, s;
+
+    do {
+      u1 = Math.random() * 2 - 1; // Random number in (-1, 1)
+      u2 = Math.random() * 2 - 1; // Random number in (-1, 1)
+      s = u1 * u1 + u2 * u2;      // Compute s = u1^2 + u2^2
+    } while (s >= 1 || s === 0);  // Discard if outside the unit circle or s == 0
+
+    const factor = Math.sqrt(-2.0 * Math.log(s) / s);
+
+    const z0 = u1 * factor;
+    const z1 = u2 * factor;
+
+    return [mean + z0 * sd, mean + z1 * sd];
+  }
+  
+
+ 
+  brownianMotion(sd, molecules, minRadius, maxRadius, minZ, minY) {
+    molecules.forEach(molecule => {
+      // Generate normally distributed random displacements for X and Y coordinates
+      const [deltaX, deltaY] = this.normalPolar(0, sd);
+      
+      // Generate normally distributed random displacement for Z coordinate
+      const deltaZ = this.normalPolar(0, sd)[0];
+      
+ 
+      molecule.position.add(new THREE.Vector3(
+        deltaX,
+        deltaY,
+        deltaZ
+      ));
+      
+     
+      // Keep particles within maximum radius (e.g., cell boundary)
+      if (molecule.position.length() > maxRadius) {
+        molecule.position.setLength(maxRadius);
+      }
+      
+      // Keep particles outside minimum radius (e.g., nucleus or other structures)
+      if (molecule.position.length() < minRadius) {
+        molecule.position.setLength(minRadius);
+      }
+      
+      // Additional boundary constraints if specified
+      if (minZ !== undefined && molecule.position.z < minZ) {
+        molecule.position.z = minZ;
+      }
+      
+      if (minY !== undefined && molecule.position.y < minY) {
+        molecule.position.y = minY;
+      }
+    });
+  }
+
+  animate() {
+ 
+    this.brownianMotion(this.bacteriaSD, this.bacteria, 0, this.cellRadius*2);
+    
+    // AR hit testing
+    if (this.isARMode) {
+      this.handleARHitTest();
+    }
+    
+    this.renderer.setAnimationLoop(this.animate.bind(this));
+    this.renderer.render(this.scene, this.camera);
+  }
+  
+  handleARHitTest() {
+    if (!this.hitTestSourceRequested) {
+      const session = this.renderer.xr.getSession();
+      
+      if (session) {
+        session.requestReferenceSpace('viewer').then((referenceSpace) => {
+          session.requestHitTestSource({ space: referenceSpace }).then((source) => {
+            this.hitTestSource = source;
+          });
+        });
+        
+        session.addEventListener('end', () => {
+          this.hitTestSourceRequested = false;
+          this.hitTestSource = null;
+        });
+        
+        this.hitTestSourceRequested = true;
+      }
+    }
+    
+    if (this.hitTestSource) {
+      const referenceSpace = this.renderer.xr.getReferenceSpace();
+      const frame = this.renderer.xr.getFrame();
+      
+      if (frame) {
+        const hitTestResults = frame.getHitTestResults(this.hitTestSource);
+        
+        if (hitTestResults.length && !this.modelPlaced) { // Only show the reticle if the model is not placed
+          const hit = hitTestResults[0];
+          const pose = hit.getPose(referenceSpace);
+          
+          if (pose) {
+            this.reticle.visible = true;
+            this.reticle.matrix.fromArray(pose.transform.matrix);
+          }
+        } else {
+          this.reticle.visible = false;
+        }
+      }
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => new BrownianViewer());
+
+  </script>
+</body>
+</html>
