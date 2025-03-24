@@ -22,7 +22,7 @@ export class BrownianViewer {
     this.world = this.physicsManager.world;
     this.rigidBodies = this.physicsManager.rigidBodies;
     
-    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1000, this.bacteria, 0, this.cellRadius*2);
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1900, this.bacteria, 0, this.cellRadius);
     
     // Initialize AR
     this.arHandler = new ARHandler(this.renderer, this.scene, this.cellGroup);
@@ -102,7 +102,7 @@ export class BrownianViewer {
     this.physicsManager.rigidBodies = [];
     
     // Create new particles
-    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1000, this.bacteria, 0, this.cellRadius*2);
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1500, this.bacteria, 0, this.cellRadius);
   }
 
   initScene() {
@@ -151,7 +151,7 @@ export class BrownianViewer {
 
   initProperties() {
     this.bacteria = [];
-    this.bacteriaOrientations = []; // Store orientation for each particle
+    this.bacteriaOrientations = []; // Store 3D orientation for each particle
     
     // Physical constants and environmental parameters
     const temperatureKelvin = 310; // Body temperature in Kelvin (37°C)
@@ -232,6 +232,7 @@ export class BrownianViewer {
     const geometry = new THREE.SphereGeometry(size, segments, segments);
     const material = new THREE.MeshPhongMaterial({ emissive: color, emissiveIntensity: 1 });
 
+    
 
     for (let i = 0; i < number; i++) {
       const particle = new THREE.Mesh(geometry, material);
@@ -257,27 +258,34 @@ export class BrownianViewer {
       rigidBody.userData = { threeObject: particle };
       this.rigidBodies.push(rigidBody);
       
-      // Initialize random orientation (in radians)
-      const randomOrientation = Math.random() * 2 * Math.PI;
-      this.bacteriaOrientations.push(randomOrientation);
+      // Initialize random 3D orientation
+      // Store as a unit vector for 3D orientation
+      const orientation = randomUnitVector();
+      this.bacteriaOrientations.push(orientation);
     }
   }
   
-  // Update particle orientations with rotational diffusion
+  // Update particle orientations with rotational diffusion in 3D
   updateOrientations(dt) {
     for (let i = 0; i < this.bacteria.length; i++) {
-      // Generate rotational noise
-      const rotationalNoise = normalPolar(0, Math.sqrt(2 * this.rotationalDiffusionCoefficient * dt))[0];
+      const orientation = this.bacteriaOrientations[i];
       
-      // Update orientation
-      this.bacteriaOrientations[i] += rotationalNoise;
+      // Generate 3D rotational noise
+      const noiseScale = Math.sqrt(2 * this.rotationalDiffusionCoefficient * dt);
+      const [noiseX, noiseY] = normalPolar(0, noiseScale);
+      const noiseZ = normalPolar(0, noiseScale)[0];
       
-      // Keep orientation in [0, 2π] range (optional)
-      this.bacteriaOrientations[i] = this.bacteriaOrientations[i] % (2 * Math.PI);
+      // Apply noise to orientation vector
+      orientation.x += noiseX;
+      orientation.y += noiseY;
+      orientation.z += noiseZ;
+      
+      // Re-normalize to keep it as a unit vector
+      orientation.normalize();
     }
   }
   
-  // Modified to include self-propulsion based on orientation
+  // Modified to include self-propulsion based on 3D orientation
   brownianMotion(sd, molecules, maxRadius) {
     for (let i = 0; i < molecules.length; i++) {
       const rigidBody = this.rigidBodies[i];
@@ -286,12 +294,11 @@ export class BrownianViewer {
       // Get current position
       const currentPosition = rigidBody.translation();
       
-      // Calculate orientation unit vector (direction of self-propulsion)
-      // For 3D, we'll use the XY plane for orientation and allow small Z movements from noise
+      // Use the orientation vector directly for self-propulsion
       const orientationVector = {
-        x: Math.cos(orientation),
-        y: Math.sin(orientation),
-        z: 0 // For 2D motion in the xy-plane
+        x: orientation.x,
+        y: orientation.y,
+        z: orientation.z
       };
       
       // Generate normally distributed random displacements (translational noise)
@@ -311,14 +318,27 @@ export class BrownianViewer {
         
         // When hitting the boundary, reflect the orientation (bounce)
         const normal = newPosition.clone().normalize();
-        const dot = orientationVector.x * normal.x + orientationVector.y * normal.y;
         
-        // Calculate new orientation after reflection
-        const newOrientationX = orientationVector.x - 2 * dot * normal.x;
-        const newOrientationY = orientationVector.y - 2 * dot * normal.y;
+        // Calculate dot product between orientation and normal
+        const dot = orientationVector.x * normal.x + 
+                    orientationVector.y * normal.y + 
+                    orientationVector.z * normal.z;
         
-        // Update orientation
-        this.bacteriaOrientations[i] = Math.atan2(newOrientationY, newOrientationX);
+        // Calculate reflected orientation vector (v - 2(v·n)n)
+        orientation.x = orientationVector.x - 2 * dot * normal.x;
+        orientation.y = orientationVector.y - 2 * dot * normal.y;
+        orientation.z = orientationVector.z - 2 * dot * normal.z;
+        
+        // Normalize the reflected orientation
+        const length = Math.sqrt(
+          orientation.x * orientation.x + 
+          orientation.y * orientation.y + 
+          orientation.z * orientation.z
+        );
+        
+        orientation.x /= length;
+        orientation.y /= length;
+        orientation.z /= length;
       }
       
       // Update rigid body position
@@ -334,7 +354,7 @@ export class BrownianViewer {
     this.updateOrientations(this.timeStep);
     
     // Apply Brownian motion with self-propulsion
-    this.brownianMotion(this.bacteriaSD, this.bacteria, this.cellRadius*2);
+    this.brownianMotion(this.bacteriaSD, this.bacteria, this.cellRadius);
     
     // Step the physics world forward
     this.world.step();
@@ -343,13 +363,18 @@ export class BrownianViewer {
     for (let i = 0; i < this.bacteria.length; i++) {
       const rigidBody = this.rigidBodies[i];
       const molecule = this.bacteria[i];
+      const orientation = this.bacteriaOrientations[i];
       
       const position = rigidBody.translation();
       molecule.position.set(position.x, position.y, position.z);
       
-      // Update rotation to match orientation
-      const orientation = this.bacteriaOrientations[i];
-      molecule.rotation.z = orientation;
+      // Update rotation to match 3D orientation
+      // Create a rotation matrix that aligns the particle with its orientation vector
+      molecule.lookAt(
+        position.x + orientation.x,
+        position.y + orientation.y,
+        position.z + orientation.z
+      );
     }
     
     if (this.isARMode) {
