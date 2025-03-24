@@ -346,6 +346,15 @@
           optionalFeatures: ['dom-overlay'],
           domOverlay: { root: document.body }
         });
+
+          // Apply custom styling to make the button bigger
+  arButton.style.padding = '16px 20px';
+  arButton.style.fontSize = '20px';
+  arButton.style.width = 'auto';
+  arButton.style.fontWeight = 'bold';
+  arButton.style.borderRadius = '8px';
+  arButton.style.minWidth = '180px';  // Ensure minimum width
+  arButton.style.opacity = '0.9';
         
         document.body.appendChild(arButton);
         
