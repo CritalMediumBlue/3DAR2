@@ -7,16 +7,27 @@ import { normalPolar } from './utils.js';
 
 export class BrownianViewer {
   constructor() {
-    // Initialize Rapier when the module is loaded
-    RAPIER.init().then(() => {
-      this.start();
-    });
-  }
-
-  start() {
+    // Initialize the scene and AR handler immediately
     this.initScene();
     this.initProperties();
     
+    // Initialize AR
+    this.arHandler = new ARHandler(this.renderer, this.scene, this.cellGroup);
+    this.setupCallbacks();
+    
+    // Setup UI controls
+    this.setupUIControls();
+    
+    // Start the animation loop immediately
+    this.animate();
+    
+    // Initialize Rapier when the module is loaded
+    RAPIER.init().then(() => {
+      this.initPhysics();
+    });
+  }
+  
+  initPhysics() {
     // Initialize physics
     this.physicsManager = new PhysicsManager(RAPIER);
     this.world = this.physicsManager.world;
@@ -26,17 +37,10 @@ export class BrownianViewer {
     this.createBoundaryBox();
     
     // Create particles
-    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1000, this.bacteria, this.boxSize);
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 800, this.bacteria, this.boxSize);
     this.createParticles(this.bacteriaRadius*3, 8, 0x00ffff, 4, this.bacteria, this.boxSize);
-    // Initialize AR
-    this.arHandler = new ARHandler(this.renderer, this.scene, this.cellGroup);
-    this.setupCallbacks();
-    
-    // Setup UI controls
-    this.setupUIControls();
-    
-    this.animate();
   }
+
   
   setupUIControls() {
     // Get UI elements
@@ -106,7 +110,7 @@ export class BrownianViewer {
     this.physicsManager.rigidBodies = [];
     
     // Create new particles
-    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1000, this.bacteria, this.boxSize);
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 800, this.bacteria, this.boxSize);
     this.createParticles(this.bacteriaRadius*3, 8, 0x00ffff, 4, this.bacteria, this.boxSize);
   }
 
@@ -157,6 +161,7 @@ export class BrownianViewer {
   initProperties() {
     this.bacteria = [];
     this.bacteriaOrientations = []; // Store 3D orientation for each particle
+    this.rigidBodies = []; // Initialize rigidBodies array
     
     // Physical constants and environmental parameters
     const temperatureKelvin = 310; // Body temperature in Kelvin (37°C)
@@ -199,6 +204,7 @@ export class BrownianViewer {
   }
   
   setupTouchInteraction() {
+    // Touch events for rotating and scaling the model in AR mode
     document.addEventListener('touchstart', (event) => {
       if (this.isARMode && this.modelPlaced && event.touches.length > 0) {
         this.touchStartX = event.touches[0].clientX;
@@ -208,18 +214,22 @@ export class BrownianViewer {
     
     document.addEventListener('touchmove', (event) => {
       if (this.isARMode && this.modelPlaced && event.touches.length > 0) {
+        // Prevent default to avoid scrolling the page
         event.preventDefault();
         
+        // Single touch for rotation
         if (event.touches.length === 1) {
           const touchX = event.touches[0].clientX;
           const touchY = event.touches[0].clientY;
           
+          // Calculate the rotation based on horizontal movement
           const deltaX = touchX - this.touchStartX;
           this.cellGroup.rotation.y += deltaX * 0.01;
 
           const deltaY = touchY - this.touchStartY;
           this.cellGroup.rotation.x += deltaY * 0.01;
           
+          // Update the starting position
           this.touchStartX = touchX;
           this.touchStartY = touchY;
         }
@@ -236,6 +246,15 @@ export class BrownianViewer {
       
       if (this.controls) {
         this.controls.enabled = false;
+      }
+    };
+    
+    this.arHandler.onSessionEnd = () => {
+      this.isARMode = false;
+      this.modelPlaced = false;
+      
+      if (this.controls) {
+        this.controls.enabled = true;
       }
     };
     
@@ -368,33 +387,37 @@ export class BrownianViewer {
   }
 
   animate() {
-    // Update orientations with rotational diffusion
-    this.updateOrientations(this.timeStep);
-    
-    // Apply Brownian motion with self-propulsion and periodic boundary
-    this.brownianMotion(this.bacteriaSD, this.bacteria);
-    
-    // Step the physics world forward
-    this.world.step();
-    
-    // Update Three.js objects from physics positions
-    for (let i = 0; i < this.bacteria.length; i++) {
-      const rigidBody = this.rigidBodies[i];
-      const molecule = this.bacteria[i];
-      const orientation = this.bacteriaOrientations[i];
+    // Check if physics is initialized
+    if (this.world && this.bacteria.length > 0 && this.rigidBodies.length > 0) {
+      // Update orientations with rotational diffusion
+      this.updateOrientations(this.timeStep);
       
-      const position = rigidBody.translation();
-      molecule.position.set(position.x, position.y, position.z);
+      // Apply Brownian motion with self-propulsion and periodic boundary
+      this.brownianMotion(this.bacteriaSD, this.bacteria);
       
-      // Update rotation to match 3D orientation
-      // Create a rotation matrix that aligns the particle with its orientation vector
-      molecule.lookAt(
-        position.x + orientation.x,
-        position.y + orientation.y,
-        position.z + orientation.z
-      );
+      // Step the physics world forward
+      this.world.step();
+      
+      // Update Three.js objects from physics positions
+      for (let i = 0; i < this.bacteria.length; i++) {
+        const rigidBody = this.rigidBodies[i];
+        const molecule = this.bacteria[i];
+        const orientation = this.bacteriaOrientations[i];
+        
+        const position = rigidBody.translation();
+        molecule.position.set(position.x, position.y, position.z);
+        
+        // Update rotation to match 3D orientation
+        // Create a rotation matrix that aligns the particle with its orientation vector
+        molecule.lookAt(
+          position.x + orientation.x,
+          position.y + orientation.y,
+          position.z + orientation.z
+        );
+      }
     }
     
+    // Always handle AR hit testing if in AR mode
     if (this.isARMode) {
       this.arHandler.handleHitTest();
     }

@@ -47,6 +47,17 @@ export class ARHandler {
     this.renderer.xr.addEventListener('sessionstart', () => {
       if (this.onSessionStart) this.onSessionStart();
     });
+    
+    this.renderer.xr.addEventListener('sessionend', () => {
+      this.modelPlaced = false;
+      this.hitTestSourceRequested = false;
+      this.hitTestSource = null;
+      
+      // Reset the cell group visibility and position
+      this.cellGroup.visible = true;
+      
+      if (this.onSessionEnd) this.onSessionEnd();
+    });
   }
   
   onSelect() {
