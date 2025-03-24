@@ -17,14 +17,14 @@ export class PhysicsManager {
     // Create a rigid body
     const rigidBodyDesc = this.RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(position.x, position.y, position.z)
-      .setLinearDamping(10000); // Add some damping to simulate viscosity
+      .setLinearDamping(5.0); // Reduced damping for MIPS (allows more persistent motion)
       
     const rigidBody = this.world.createRigidBody(rigidBodyDesc);
     
     // Create a collider (sphere)
     const colliderDesc = this.RAPIER.ColliderDesc.ball(size)
-      .setRestitution(1) // Elastic collisions
-      .setFriction(0.0)  // No friction
+      .setRestitution(0.8) // Slightly inelastic collisions (helps with clustering)
+      .setFriction(0.1)    // Small friction (helps with phase separation)
       .setDensity(0.0000001); // Density of water
     
     this.world.createCollider(colliderDesc, rigidBody);
