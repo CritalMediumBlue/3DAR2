@@ -26,7 +26,7 @@ export class BrownianViewer {
     this.createBoundaryBox();
     
     // Create particles
-    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 4000, this.bacteria, this.boxSize);
+    this.createParticles(this.bacteriaRadius, 8, 0xff0000, 1500, this.bacteria, this.boxSize);
     this.createParticles(this.bacteriaRadius*2.12, 8, 0x00ffff, 4, this.bacteria, this.boxSize);
     // Initialize AR
     this.arHandler = new ARHandler(this.renderer, this.scene, this.cellGroup);
