@@ -28,17 +28,30 @@ import RAPIER from 'rapier';
 
 class BrownianViewer {
   constructor() {
-    this.start();
+    // Initialize Rapier when the module is loaded
+    RAPIER.init().then(() => {
+      this.start();
+    });
   }
 
   start(){
     this.initScene();
     this.initProperties();
+    this.initPhysics();
 
     this.createParticles(this.bacteriaRadius, 8, 0xff0000, 100, this.bacteria, 0, this.cellRadius*2); // Extra cellular molecules
     
     this.setupAR();
     this.animate();
+  }
+
+  initPhysics() {
+    // Create a new physics world with no gravity (for pure Brownian motion)
+    const gravity = { x: 0.0, y: 0.0, z: 0.0 };
+    this.world = new RAPIER.World(gravity);
+    
+    // Store rigid bodies corresponding to bacteria
+    this.rigidBodies = [];
   }
 
   initScene() {
@@ -114,6 +127,9 @@ class BrownianViewer {
 
   
     this.cellRadius = 5/0.641; //10 micrometers in diameter
+    
+    // Physics simulation parameters
+    this.physicsTimeStep = 1/60; // 60 fps for physics
     this.isARMode = false;
     this.reticle = null;
     this.hitTestSource = null;
@@ -234,13 +250,36 @@ class BrownianViewer {
       const randomPosition = () => randomUnitVector().multiplyScalar(
         Math.random() * (maxRadius - minRadius) + minRadius
       );
+      
+      // Set initial position
+      const position = randomPosition();
       particle.position.set(
-        randomPosition().x,
-        randomPosition().y,
-        randomPosition().z
+        position.x,
+        position.y,
+        position.z
       );
       this.cellGroup.add(particle);
       particleGroup.push(particle);
+      
+      // Create a rigid body for this particle
+      const rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(position.x, position.y, position.z)
+        .setLinearDamping(10000); // Add some damping to simulate viscosity
+        
+      
+      const rigidBody = this.world.createRigidBody(rigidBodyDesc);
+      
+      // Create a collider (sphere) for this rigid body
+      const colliderDesc = RAPIER.ColliderDesc.ball(size)
+        .setRestitution(1) //  elastic collisions
+        .setFriction(0.0)   // No friction for bacteria
+        .setDensity(0.0000001);    // Density of water
+      
+      this.world.createCollider(colliderDesc, rigidBody);
+      
+      // Store the rigid body with a reference to its corresponding Three.js object
+      rigidBody.userData = { threeObject: particle };
+      this.rigidBodies.push(rigidBody);
     }
   }
 
@@ -266,45 +305,59 @@ class BrownianViewer {
 
  
   brownianMotion(sd, molecules, minRadius, maxRadius, minZ, minY) {
-    molecules.forEach(molecule => {
-      // Generate normally distributed random displacements for X and Y coordinates
-      const [deltaX, deltaY] = this.normalPolar(0, sd);
+    // Directly change positions for Brownian motion
+    for (let i = 0; i < molecules.length; i++) {
+      const rigidBody = this.rigidBodies[i];
+      const molecule = molecules[i];
       
-      // Generate normally distributed random displacement for Z coordinate
+      // Get current position
+      const currentPosition = rigidBody.translation();
+      
+      // Generate normally distributed random displacements
+      const [deltaX, deltaY] = this.normalPolar(0, sd);
       const deltaZ = this.normalPolar(0, sd)[0];
       
- 
-      molecule.position.add(new THREE.Vector3(
-        deltaX,
-        deltaY,
-        deltaZ
-      ));
+      // Calculate new position
+      const newPosition = new THREE.Vector3(
+        currentPosition.x + deltaX,
+        currentPosition.y + deltaY,
+        currentPosition.z + deltaZ
+      );
       
-     
+      // Apply boundary constraints
       // Keep particles within maximum radius (e.g., cell boundary)
-      if (molecule.position.length() > maxRadius) {
-        molecule.position.setLength(maxRadius);
+      if (newPosition.length() > maxRadius) {
+        newPosition.setLength(maxRadius);
       }
       
-      // Keep particles outside minimum radius (e.g., nucleus or other structures)
-      if (molecule.position.length() < minRadius) {
-        molecule.position.setLength(minRadius);
-      }
+    
       
-      // Additional boundary constraints if specified
-      if (minZ !== undefined && molecule.position.z < minZ) {
-        molecule.position.z = minZ;
-      }
+      // Update rigid body position - this will handle collision detection
+      rigidBody.setTranslation(
+        { x: newPosition.x, y: newPosition.y, z: newPosition.z },
+        true  // Wake up the body
+      );
       
-      if (minY !== undefined && molecule.position.y < minY) {
-        molecule.position.y = minY;
-      } 
-    });  
+ 
+    }
   }
 
   animate(){
- 
-    this.brownianMotion(this.bacteriaSD, this.bacteria, 0, this.cellRadius*2);
+    // Apply Brownian motion (set new positions)
+    this.brownianMotion(this.bacteriaSD, this.bacteria, 0, this.cellRadius*1);
+    
+    // Step the physics world forward to handle collisions
+    this.world.step();
+    
+    // Update Three.js objects from physics positions
+    for (let i = 0; i < this.bacteria.length; i++) {
+      const rigidBody = this.rigidBodies[i];
+      const molecule = this.bacteria[i];
+      
+      // Get position after physics step (may have changed due to collisions)
+      const position = rigidBody.translation();
+      molecule.position.set(position.x, position.y, position.z);
+    }
     
     if (this.isARMode) {
       this.handleARHitTest();
